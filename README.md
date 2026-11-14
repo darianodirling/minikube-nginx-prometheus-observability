@@ -1,84 +1,90 @@
-# Minikube NGINX + Prometheus Observability
+# KCNA Multi-Node Minikube Hands-On Lab
 
-A runnable **local Kubernetes reference architecture** demonstrating NGINX ingress, autoscaled NGINX application pods, Prometheus scraping, and a Prometheus time-series database.
+**Kubernetes and Cloud Native Associate (KCNA) practical portfolio lab** | Ubuntu Desktop VM | 2-node Minikube | Docker driver | Calico CNI
 
-> **Lab scope:** designed for Minikube. Validate cluster-specific image, add-on, networking, resource and security settings before production use. The configuration has not been executed against a live cluster in this session.
+> **Status: lab plan and reproducible reference material, not a claim of completed hands-on exercises.** This repository is aligned to the user's *KCNA Minikube Hands-On Lab Guide* (six phases, approximately 120 minutes). Completion evidence will be added as exercises are performed.
+
+## Lab environment
+
+| Item | Target |
+| --- | --- |
+| Host | Ubuntu Desktop 22.04/24.04 LTS virtual machine |
+| Resources | 4 vCPUs, 8 GiB RAM, at least 40 GiB free disk |
+| Cluster | Two Minikube nodes: `minikube` and `minikube-m02` |
+| Driver / CNI | Docker / Calico (for NetworkPolicy enforcement) |
+| Tooling | Docker Engine, kubectl, Minikube, Helm |
+| Estimated duration | 120 minutes across six sequential phases |
 
 ## Architecture
 
 ```mermaid
 flowchart TB
-  Browser[HTTP client] --> Ingress[Ingress-NGINX controller]
-  Ingress --> SVC[ClusterIP Service]
-  SVC --> NGINX[NGINX application Pods]
-  HPA[HorizontalPodAutoscaler] --> NGINX
-  Metrics[metrics-server] --> HPA
-  NGINX --> Exporter[nginx-prometheus-exporter sidecar]
-  Exporter --> Prometheus[Prometheus server]
-  Prometheus --> TSDB[(Local Prometheus TSDB)]
+  VM[Ubuntu Desktop VM: 4 vCPU / 8 GiB]
+  VM --> Docker[Docker Engine]
+  Docker --> CP[Minikube control-plane node]
+  Docker --> W[Minikube worker: minikube-m02]
+  CP <-->|Cluster networking| W
+  Calico[Calico CNI / NetworkPolicy] -.-> CP
+  Calico -.-> W
+  CP --> NS[kcna-lab namespace]
+  NS --> Web[NGINX Deployment / Service / Ingress]
+  NS --> Redis[Redis StatefulSet / PVC / PDB]
+  NS --> RBAC[ServiceAccount / Role / RoleBinding]
+  NS --> Security[Probes / scheduling / security controls]
+  Helm[Helm] --> Monitoring[kube-prometheus-stack: Prometheus / Grafana]
+  GitOps[ArgoCD] --> CP
 ```
 
-## Prerequisites
+## Curriculum roadmap
 
-- Docker or another supported Minikube driver; Minikube, kubectl, and enough local resources (~4 CPUs and 6 GiB RAM recommended).
-- `minikube addons enable ingress` and `minikube addons enable metrics-server`.
-- A reachable Minikube cluster: `kubectl get nodes`.
+| Phase | Focus | Time | Evidence to collect |
+| --- | --- | --- | --- |
+| 1 | Docker, kubectl, Helm, two-node Minikube + Calico | 15 min | `kubectl get nodes -o wide`, Calico pod status |
+| 2 | Pods, ImagePullBackOff troubleshooting, Deployments, rollouts, DaemonSets, Jobs | 25 min | Pod events, rollout history, DaemonSet/Job output |
+| 3 | ConfigMaps, Secrets, labels, annotations, startup/liveness/readiness probes | 20 min | Pod description, probe status, redacted environment evidence |
+| 4 | Taints, tolerations, affinity, Redis StatefulSet, dynamic PVCs, PDB | 20 min | Node placement, PVC binding, PDB status |
+| 5 | Kubernetes API, ServiceAccounts/RBAC, security contexts, PSA, ResourceQuota | 20 min | `kubectl auth can-i`, quota and restricted Pod status |
+| 6 | Services, Ingress, Gateway API CRDs, Calico NetworkPolicy, Kustomize, Helm, Prometheus/Grafana, ArgoCD | 20 min | Allowed/denied connectivity tests, Helm release, dashboards |
 
-## Quick start
+**Source:** uploaded *KCNA Minikube Hands-On Lab Guide*, pages 1–16. See [phase-by-phase workbook](docs/kcna-lab-plan.md) and [evidence checklist](docs/kcna-evidence-checklist.md).
+
+## Start the cluster
 
 ```bash
-minikube start --cpus=4 --memory=6144
-minikube addons enable ingress
-minikube addons enable metrics-server
-kubectl apply -k k8s/
-kubectl -n observability-demo rollout status deploy/nginx-app
-kubectl -n observability-demo rollout status deploy/prometheus
-kubectl -n observability-demo get pods,svc,ingress,hpa
+# Install Docker, kubectl, Minikube and Helm first, following the workbook.
+minikube start --nodes 2 --cpus 2 --memory 3072 --driver=docker --cni=calico
+kubectl get nodes -o wide
+kubectl get pods -n kube-system -l k8s-app=calico-node
+kubectl create namespace kcna-lab
+kubectl config set-context --current --namespace=kcna-lab
 ```
 
-### Access NGINX
+**Resource note:** With an 8 GiB host VM, running kube-prometheus-stack and ArgoCD alongside all exercises may require additional resources, cleanup, or staged installation. Treat the two-hour schedule as an estimate, not a benchmark.
 
-Add `127.0.0.1 nginx.demo.local` to your hosts file **when using the ingress port-forward method** below. Run:
+## Exercises
 
-```bash
-kubectl -n ingress-nginx port-forward service/ingress-nginx-controller 8080:80
-curl -H 'Host: nginx.demo.local' http://127.0.0.1:8080/
-```
+- [Phase-by-phase commands and concepts](docs/kcna-lab-plan.md)
+- [Lab evidence checklist](docs/kcna-evidence-checklist.md)
+- [Networking and policy considerations](docs/kcna-networking-notes.md)
+- [Existing NGINX + exporter + Prometheus demo](k8s/) — **optional extension**, not the workbook's kube-prometheus-stack installation
+- [Original observability design decisions](docs/architecture-decisions.md)
+- [Original observability verification](docs/verification.md)
 
-Depending on your Minikube driver/OS, direct Minikube ingress access may differ. The port-forward above avoids assuming the Minikube IP is reachable.
+### Important differences from the optional demo
 
-### Inspect Prometheus
+The KCNA workbook uses **Calico**, a **two-node cluster**, **Redis StatefulSet**, **namespace-scoped RBAC**, **Helm-installed kube-prometheus-stack with Grafana**, and **ArgoCD**. The existing `k8s/` demo uses a standalone Prometheus deployment and NGINX exporter, with CPU-based HPA; it remains available for extra practice but is not a substitute for the workbook.
 
-```bash
-kubectl -n observability-demo port-forward service/prometheus 9090:9090
-# Open http://127.0.0.1:9090
-```
+## Security and reproducibility
 
-Try PromQL: `up{job="nginx"}` and `nginx_http_requests_total`. The NGINX exporter reads `stub_status` at `http://127.0.0.1:8081/stub_status` inside each pod.
+- Never commit the workbook's example Secret values, real credentials, Grafana passwords, or ArgoCD initial admin passwords.
+- Keep the local Kubernetes API proxy and dashboard port-forwards bound to localhost.
+- Gateway API CRDs alone do **not** install a Gateway controller.
+- A NetworkPolicy that only permits traffic from `access=granted` pods may block the ingress controller; document or explicitly allow controller traffic if testing external ingress.
+- A Redis PDB limits voluntary disruption but does not itself guarantee Redis replication, persistence or high availability.
+- Record observed output rather than describing unperformed steps as completed.
 
-### Autoscaling demo
+## Portfolio completion criteria
 
-```bash
-kubectl -n observability-demo get hpa -w
-kubectl -n observability-demo run load --image=busybox:1.36 --restart=Never -- /bin/sh -c 'while true; do wget -q -O- http://nginx-app >/dev/null; done'
-kubectl -n observability-demo delete pod load
-```
-
-The HPA scales on **CPU utilization**, not Prometheus metrics. NGINX may not consume enough CPU from a single load pod to trigger scaling; use a suitable load generator and observe metrics-server readings. The exporter provides request and connection metrics for monitoring.
-
-## Contents
-
-- `k8s/`: Kustomize, namespace, NGINX config/deployment/service/ingress, HPA, Prometheus RBAC/config/deployment/service
-- `docs/`: architecture choices, verification and troubleshooting
-- `scripts/validate.py`: offline manifest checks
-- `.github/workflows/validate.yml`: CI syntax/structural validation
-
-## Design limitations
-
-- Prometheus uses `emptyDir` storage: data is lost when the pod is replaced.
-- No Alertmanager, Grafana, authentication, TLS, durable PVC, high availability, network policies, or production hardening.
-- Prometheus service account can list pods for service discovery only.
-- Ingress host is local lab DNS; never expose the Prometheus UI to the public internet without authentication and TLS.
-- Exporter metric names depend on exporter release.
+Capture redacted screenshots or terminal transcripts of both nodes Ready, Calico running, rollout history, probe checks, Redis PVC/PDB, RBAC allow/deny results, restricted Pod admission, NetworkPolicy allow/deny tests, Prometheus/Grafana and ArgoCD interfaces. Record software versions and any deviations from the guide.
 
 **Author:** Darian O'Dirling · Enterprise Solutions Architect portfolio.
