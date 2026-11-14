@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-config
+  namespace: observability-demo
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      location / {
+        default_type text/plain;
+        return 200 "nginx observability demo\n";
+      }
+    }
+    server {
+      listen 8081;
+      location /stub_status {
+        stub_status;
+        allow 127.0.0.1;
+        deny all;
+      }
+    }
